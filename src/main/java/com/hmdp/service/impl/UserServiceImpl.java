@@ -25,7 +25,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         // generate a random 6-digit code and store it in the session with the phone number as the key
         String code = RandomUtil.randomNumbers(6);
-        session.setAttribute("code", code);
+        session.setAttribute("code:" + phone, code);
 
         // send the code to the phone number (this is a placeholder, actual implementation would involve an SMS service)
         log.debug("Sending code {} to phone number {}", code, phone);
