@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
@@ -7,11 +8,14 @@ import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisConstants;
+import io.netty.util.internal.StringUtil;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 
@@ -35,56 +39,57 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     private Shop queryWithMutex(Long id) throws InterruptedException {
         String key = RedisConstants.CACHE_SHOP_KEY + id;
-        // query the shop from the redis cache first
-        String shopJson = stringRedisTemplate.opsForValue().get(key);
-
-        // if the shop is in the cache, return it
-        if (shopJson != null && !shopJson.isEmpty()) {
-            return JSONUtil.toBean(shopJson, Shop.class);
-        }
-
-        if (shopJson != null) {
-            return null;
-        }
-
-        // if the shop is not in the cache, try to acquire a lock
         String lockKey = RedisConstants.LOCK_SHOP_KEY + id;
-        Shop shopById = null;
-        try {
-            boolean triedToLock = tryToLock(lockKey);
+        long deadline = System.currentTimeMillis() + 2000L;
 
-            // if the lock is not acquired, wait for a short time and try again
-            if (!triedToLock) {
-                Thread.sleep(50);
-                return queryWithMutex(id);
-            }
-
-            // if the lock is acquired, double-check the cache to see if the shop is now in the cache (another thread may have populated it while we were waiting for the lock)
-            shopJson = stringRedisTemplate.opsForValue().get(key);
-            if (shopJson != null && !shopJson.isEmpty()) {
-                releaseLock(lockKey);
+        while (true) {
+            String shopJson = stringRedisTemplate.opsForValue().get(key);
+            if (StrUtil.isNotBlank(shopJson)) {
                 return JSONUtil.toBean(shopJson, Shop.class);
             }
 
-            // query the shop from the database and store it in the cache
-            shopById = getById(id);
-            if (shopById == null) {
-                // store a null value in the cache to prevent cache penetration
-                stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
+            if (shopJson != null) {
                 return null;
             }
 
-            // if the shop is found, store it in the cache and return it
-            stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shopById), RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } finally {
-            // release the lock
-            releaseLock(lockKey);
+            String lockValue = UUID.randomUUID().toString();
+            if (tryToLock(lockKey, lockValue)) {
+                try {
+                    shopJson = stringRedisTemplate.opsForValue().get(key);
+                    if (StrUtil.isNotBlank(shopJson)) {
+                        return JSONUtil.toBean(shopJson, Shop.class);
+                    }
+                    if (shopJson != null) {
+                        return null;
+                    }
 
+                    Shop shopById = getById(id);
+                    if (shopById == null) {
+                        stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
+                        return null;
+                    }
+
+                    stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shopById), RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
+                    return shopById;
+                } catch (Exception e) {
+                    throw new RuntimeException(e.getMessage());
+                } finally {
+                    releaseLock(lockKey, lockValue);
+                }
+            }
+            // if the lock is not acquired, wait for a short time and retry
+            if (System.currentTimeMillis() > deadline) {
+                throw new RuntimeException("Failed to acquire lock for shop id: " + id);
+            }
+
+            try {
+                Thread.sleep(50 + ThreadLocalRandom.current().nextInt(50));
+            } catch (Exception e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e.getMessage());
+            }
         }
 
-        return shopById;
     }
 
 
@@ -134,12 +139,14 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         return Result.ok();
     }
 
-    private boolean tryToLock(String key) {
-        Boolean flag = stringRedisTemplate.opsForValue().setIfAbsent(key, "1", RedisConstants.LOCK_SHOP_TTL, TimeUnit.SECONDS);
+    private boolean tryToLock(String key, String lockValue) {
+        Boolean flag = stringRedisTemplate.opsForValue().setIfAbsent(key, lockValue, RedisConstants.LOCK_SHOP_TTL, TimeUnit.SECONDS);
         return flag != null && flag;
     }
 
-    private void releaseLock(String key) {
-        stringRedisTemplate.delete(key);
+    private void releaseLock(String key, String lockValue) {
+        if (lockValue.equals(stringRedisTemplate.opsForValue().get(key))) {
+            stringRedisTemplate.delete(key);
+        }
     }
 }
