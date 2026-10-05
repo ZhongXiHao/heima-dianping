@@ -34,3 +34,7 @@ server:
 logging:
   level:
     com.hmdp: debug
+
+jwt:
+  secret: ${JWT_SECRET:dev-only-secret-please-change-me-0123456789}
+  expiration-ms: ${JWT_EXPIRATION_MS:86400000}
