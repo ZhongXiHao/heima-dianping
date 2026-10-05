@@ -21,19 +21,85 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     private StringRedisTemplate stringRedisTemplate;
 
     @Override
-    public Result queryById(Long id) {
+    public Result queryById(Long id) throws InterruptedException {
+        // cache penetration prevention
+//        Shop shop = queryWithPassThrough(id);
+        // cache breakdown prevention
+        Shop shop = this.queryWithMutex(id);
+        if (shop == null) {
+            return Result.fail("Shop not found");
+        }
+
+        return Result.ok(shop);
+    }
+
+    private Shop queryWithMutex(Long id) throws InterruptedException {
         String key = RedisConstants.CACHE_SHOP_KEY + id;
         // query the shop from the redis cache first
         String shopJson = stringRedisTemplate.opsForValue().get(key);
 
         // if the shop is in the cache, return it
         if (shopJson != null && !shopJson.isEmpty()) {
-            Shop shop = JSONUtil.toBean(shopJson, Shop.class);
-            return Result.ok(shop);
+            return JSONUtil.toBean(shopJson, Shop.class);
         }
 
         if (shopJson != null) {
-            return Result.fail("Shop not found");
+            return null;
+        }
+
+        // if the shop is not in the cache, try to acquire a lock
+        String lockKey = RedisConstants.LOCK_SHOP_KEY + id;
+        Shop shopById = null;
+        try {
+            boolean triedToLock = tryToLock(lockKey);
+
+            // if the lock is not acquired, wait for a short time and try again
+            if (!triedToLock) {
+                Thread.sleep(50);
+                return queryWithMutex(id);
+            }
+
+            // if the lock is acquired, double-check the cache to see if the shop is now in the cache (another thread may have populated it while we were waiting for the lock)
+            shopJson = stringRedisTemplate.opsForValue().get(key);
+            if (shopJson != null && !shopJson.isEmpty()) {
+                releaseLock(lockKey);
+                return JSONUtil.toBean(shopJson, Shop.class);
+            }
+
+            // query the shop from the database and store it in the cache
+            shopById = getById(id);
+            if (shopById == null) {
+                // store a null value in the cache to prevent cache penetration
+                stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
+                return null;
+            }
+
+            // if the shop is found, store it in the cache and return it
+            stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shopById), RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        } finally {
+            // release the lock
+            releaseLock(lockKey);
+
+        }
+
+        return shopById;
+    }
+
+
+    private Shop queryWithPassThrough(Long id) {
+        String key = RedisConstants.CACHE_SHOP_KEY + id;
+        // query the shop from the redis cache first
+        String shopJson = stringRedisTemplate.opsForValue().get(key);
+
+        // if the shop is in the cache, return it
+        if (shopJson != null && !shopJson.isEmpty()) {
+            return JSONUtil.toBean(shopJson, Shop.class);
+        }
+
+        if (shopJson != null) {
+            return null;
         }
 
         // if the shop is not in the cache, query it from the database
@@ -43,13 +109,13 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         if (shopById == null) {
             // store a null value in the cache to prevent cache penetration
             stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
-            return Result.fail("Shop not found");
+            return null;
         }
 
         // if the shop is found, store it in the cache and return it
         stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shopById), RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
 
-        return Result.ok(shopById);
+        return shopById;
     }
 
     @Override
@@ -66,5 +132,14 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         stringRedisTemplate.delete(RedisConstants.CACHE_SHOP_KEY + id);
 
         return Result.ok();
+    }
+
+    private boolean tryToLock(String key) {
+        Boolean flag = stringRedisTemplate.opsForValue().setIfAbsent(key, "1", RedisConstants.LOCK_SHOP_TTL, TimeUnit.SECONDS);
+        return flag != null && flag;
+    }
+
+    private void releaseLock(String key) {
+        stringRedisTemplate.delete(key);
     }
 }
