@@ -1,6 +1,5 @@
 package com.hmdp.utils;
 
-import cn.hutool.core.lang.TypeReference;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
@@ -9,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.lang.reflect.Type;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -112,6 +112,13 @@ public class CacheClient {
      * @return
      */
     public <R, ID> R queryWithLogicalExpire(String prefix, ID id, Class<R> type, Function<ID, R> dbFallback, long ttl, TimeUnit timeUnit) {
+        return queryWithLogicalExpire(prefix, id, (Type) type, dbFallback, ttl, timeUnit);
+    }
+
+    /**
+     * Same as above, but accepts a generic type such as {@code new TypeReference<List<Shop>>() {}.getType()}.
+     */
+    public <R, ID> R queryWithLogicalExpire(String prefix, ID id, Type type, Function<ID, R> dbFallback, long ttl, TimeUnit timeUnit) {
         if (id == null) {
             return null;
         }
@@ -125,7 +132,8 @@ public class CacheClient {
         }
         RedisData<R> redisData = parseJsonToRedisData(shopJson, type);
         R data = redisData.getData();
-        if (redisData.getExpireTime().isAfter(LocalDateTime.now())) {
+        // a missing expireTime means malformed data, treat it as expired so it gets rebuilt
+        if (redisData.getExpireTime() != null && redisData.getExpireTime().isAfter(LocalDateTime.now())) {
             return data;
         }
 
@@ -146,7 +154,7 @@ public class CacheClient {
             }
 
             RedisData<R> latestRedisData = parseJsonToRedisData(latest, type);
-            if (latestRedisData.getExpireTime().isAfter(LocalDateTime.now())) {
+            if (latestRedisData.getExpireTime() != null && latestRedisData.getExpireTime().isAfter(LocalDateTime.now())) {
                 return latestRedisData.getData();
             }
 
@@ -257,14 +265,15 @@ public class CacheClient {
         }
     }
 
-    private <R> RedisData<R> parseJsonToRedisData(String json, Class<R> type) {
-        RedisData<Object> raw = JSONUtil.toBean(json, new TypeReference<RedisData<Object>>() {
-        }, false);
+    private <R> RedisData<R> parseJsonToRedisData(String json, Type type) {
+        JSONObject root = JSONUtil.parseObj(json);
         RedisData<R> result = new RedisData<>();
-        result.setExpireTime(raw.getExpireTime());
-        if (raw.getData() instanceof JSONObject) {
-            JSONObject dataJson = (JSONObject) raw.getData();
-            result.setData(JSONUtil.toBean(dataJson, type));
+        result.setExpireTime(root.get("expireTime", LocalDateTime.class));
+
+        Object data = root.get("data");
+        if (data != null) {
+            // data may be a JSONObject or a JSONArray, so convert it back to a string and parse by the target type
+            result.setData(JSONUtil.toBean(JSONUtil.toJsonStr(data), type, false));
         }
         return result;
     }
