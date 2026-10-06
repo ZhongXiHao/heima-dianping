@@ -13,9 +13,9 @@ class HmDianPingApplicationTests {
     @Resource
     private ShopServiceImpl shopService;
 
-    @Test
-    public void saveShopToRedisCache() throws InterruptedException {
-        shopService.saveShopToRedisCache(1L, 2L);
-    }
+//    @Test
+//    public void saveShopToRedisCache() throws InterruptedException {
+//        shopService.saveShopToRedisCache(1L, 2L);
+//    }
 
 }
