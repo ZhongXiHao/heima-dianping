@@ -239,6 +239,13 @@ public class CacheClient {
         return queryWithMutex(prefix, id, type, dbFallback, ttl, timeUnit,
                 RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
     }
+    public <ID> void delete (String prefix, ID id){
+        if(id == null){
+            return;
+        }
+        String key = prefix + id;
+        stringRedisTemplate.delete(key);
+    }
 
     // preload the shop data into redis cache with an expiration time
     public <R, ID> void saveShopToRedisCache(ID id, Function<ID, R> dbFallback, long ttl, TimeUnit timeUnit) {

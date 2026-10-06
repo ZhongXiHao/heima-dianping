@@ -44,6 +44,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         return Result.ok(shop);
     }
+
     @Override
     @Transactional
     public Result update(Shop shop) {
@@ -55,19 +56,8 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         // update database
         updateById(shop);
         // delete cache
-        stringRedisTemplate.delete(RedisConstants.CACHE_SHOP_KEY + id);
+        cacheClient.delete(RedisConstants.CACHE_SHOP_KEY, id);
 
         return Result.ok();
-    }
-
-    private boolean tryToLock(String key, String lockValue) {
-        Boolean flag = stringRedisTemplate.opsForValue().setIfAbsent(key, lockValue, RedisConstants.LOCK_SHOP_TTL, TimeUnit.SECONDS);
-        return flag != null && flag;
-    }
-
-    private void releaseLock(String key, String lockValue) {
-        if (lockValue.equals(stringRedisTemplate.opsForValue().get(key))) {
-            stringRedisTemplate.delete(key);
-        }
     }
 }
