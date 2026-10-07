@@ -8,4 +8,6 @@ import org.springframework.http.ResponseEntity;
 public interface IVoucherOrderService extends IService<VoucherOrder> {
 
     ResponseEntity<Result> seckillVoucher(Long voucherId);
+
+    ResponseEntity<Result> crateVoucherOrder(Long voucherId);
 }

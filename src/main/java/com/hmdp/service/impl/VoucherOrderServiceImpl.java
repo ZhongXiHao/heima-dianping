@@ -9,8 +9,10 @@ import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.UserHolder;
+import org.springframework.aop.framework.AopContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +31,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     }
 
     @Override
-    @Transactional
     public ResponseEntity<Result> seckillVoucher(Long voucherId) {
         // query id exists or not
         if (voucherId == null) {
@@ -55,12 +56,27 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Result.fail("Seckill stock is not enough"));
         }
 
+
+        Long userId = UserHolder.getUser().getId();
+
+        // 用 intern 是因为每次调用 toString() 都会创建一个新的 String 对象，而 intern() 方法会返回字符串常量池中的唯一实例，这样可以保证锁的唯一性，避免不同的线程持有不同的锁对象，从而导致锁失效的问题。
+        synchronized (userId.toString().intern()) {
+            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
+            return proxy.crateVoucherOrder(voucherId);
+        }
+
+    }
+
+    @NonNull
+    @Transactional
+    public ResponseEntity<Result> crateVoucherOrder(Long voucherId) {
         // check if the user has already ordered the voucher
         Long userId = UserHolder.getUser().getId();
-//        int count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
-//        if (count > 0) {
-//            return Result.fail("You have already ordered this voucher");
-//        }
+
+        int count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+        if (count > 0) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Result.fail("User has already ordered the voucher"));
+        }
 
         // subtract the stock and update the database
         boolean success = seckillVoucherService.update()
@@ -82,5 +98,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         save(voucherOrder);
 
         return ResponseEntity.ok(Result.ok(voucherOrderId));
+
     }
 }
