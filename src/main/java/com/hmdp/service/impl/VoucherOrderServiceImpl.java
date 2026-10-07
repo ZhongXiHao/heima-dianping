@@ -66,6 +66,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         boolean success = seckillVoucherService.update()
                 .setSql("stock = stock - 1")
                 .eq("voucher_id", voucherId)
+                .gt("stock", 0)   // 乐观锁思路：库存大于 0 才能扣
                 .update();
         if (!success) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Result.fail("Seckill stock is not enough"));
