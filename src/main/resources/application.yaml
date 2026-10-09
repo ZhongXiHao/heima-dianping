@@ -18,6 +18,8 @@ spring:
         min-idle: 1
         max-idle: 10
         time-between-eviction-runs: 10s
+    host: localhost
+    port: 6379
   jackson:
     default-property-inclusion: non_null
 

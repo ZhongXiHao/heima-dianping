@@ -11,6 +11,8 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,11 +29,13 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private final ISeckillVoucherService seckillVoucherService;
     private final RedisIdWorker redisIdWorker;
     private final SimpleRedisLock simpleRedisLock;
+    private final RedissonClient redissonClient;
 
-    public VoucherOrderServiceImpl(ISeckillVoucherService seckillVoucherService, RedisIdWorker redisIdWorker, SimpleRedisLock simpleRedisLock) {
+    public VoucherOrderServiceImpl(ISeckillVoucherService seckillVoucherService, RedisIdWorker redisIdWorker, SimpleRedisLock simpleRedisLock, RedissonClient redissonClient) {
         this.seckillVoucherService = seckillVoucherService;
         this.redisIdWorker = redisIdWorker;
         this.simpleRedisLock = simpleRedisLock;
+        this.redissonClient = redissonClient;
     }
 
     @Override
@@ -70,7 +74,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 //        }
         String lockKey = "voucher_order:" + userId;
         String lockValue = UUID.fastUUID().toString(true) + "-" + Thread.currentThread().getId();
-        boolean isLock = simpleRedisLock.tryToLock(lockKey, lockValue, 100);
+        RLock lock = redissonClient.getLock(lockKey);
+        boolean isLock = lock.tryLock();
 
         if (!isLock) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Result.fail("You are already ordering the voucher, please wait"));
@@ -80,7 +85,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.crateVoucherOrder(voucherId);
         } finally {
-            simpleRedisLock.releaseLock(lockKey, lockValue);
+            lock.unlock();
         }
 
     }

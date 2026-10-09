@@ -87,6 +87,21 @@
             <version>1.9.25.1</version>
         </dependency>
 
+
+        <!-- Source: https://mvnrepository.com/artifact/org.redisson/redisson -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>4.7.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-native-unix-common</artifactId>
+            <version>4.1.100.Final</version>
+        </dependency>
+
+
     </dependencies>
 
     <build>
