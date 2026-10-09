@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.lang.UUID;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
@@ -8,6 +9,7 @@ import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.http.HttpStatus;
@@ -24,10 +26,12 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     private final ISeckillVoucherService seckillVoucherService;
     private final RedisIdWorker redisIdWorker;
+    private final SimpleRedisLock simpleRedisLock;
 
-    public VoucherOrderServiceImpl(ISeckillVoucherService seckillVoucherService, RedisIdWorker redisIdWorker) {
+    public VoucherOrderServiceImpl(ISeckillVoucherService seckillVoucherService, RedisIdWorker redisIdWorker, SimpleRedisLock simpleRedisLock) {
         this.seckillVoucherService = seckillVoucherService;
         this.redisIdWorker = redisIdWorker;
+        this.simpleRedisLock = simpleRedisLock;
     }
 
     @Override
@@ -60,9 +64,23 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         Long userId = UserHolder.getUser().getId();
 
         // 用 intern 是因为每次调用 toString() 都会创建一个新的 String 对象，而 intern() 方法会返回字符串常量池中的唯一实例，这样可以保证锁的唯一性，避免不同的线程持有不同的锁对象，从而导致锁失效的问题。
-        synchronized (userId.toString().intern()) {
+//        synchronized (userId.toString().intern()) {
+//            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
+//            return proxy.crateVoucherOrder(voucherId);
+//        }
+        String lockKey = "voucher_order:" + userId;
+        String lockValue = UUID.fastUUID().toString(true) + "-" + Thread.currentThread().getId();
+        boolean isLock = simpleRedisLock.tryToLock(lockKey, lockValue, 100);
+
+        if (!isLock) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Result.fail("You are already ordering the voucher, please wait"));
+        }
+
+        try {
             IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.crateVoucherOrder(voucherId);
+        } finally {
+            simpleRedisLock.releaseLock(lockKey, lockValue);
         }
 
     }
