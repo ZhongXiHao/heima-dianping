@@ -7,7 +7,7 @@ import org.springframework.http.ResponseEntity;
 
 public interface IVoucherOrderService extends IService<VoucherOrder> {
 
-    ResponseEntity<Result> seckillVoucher(Long voucherId);
+    ResponseEntity<Result> seckillVoucher(Long voucherId) throws InterruptedException;
 
-    ResponseEntity<Result> crateVoucherOrder(Long voucherId);
+    void createVoucherOrder(VoucherOrder voucherOrder);
 }

@@ -20,7 +20,7 @@ public class VoucherOrderController {
     }
 
     @PostMapping("seckill/{id}")
-    public ResponseEntity<Result> seckillVoucher(@PathVariable("id") Long voucherId) {
+    public ResponseEntity<Result> seckillVoucher(@PathVariable("id") Long voucherId) throws InterruptedException {
         return voucherOrderService.seckillVoucher(voucherId);
     }
 }
