@@ -115,4 +115,11 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         System.out.println(top5Ids);
         return Result.ok(userDTOS);
     }
+
+    @Override
+    public Result queryMyBlogByUserId(Integer current, Long id) {
+        Page<Blog> page = query().eq("user_id", id).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
+        List<Blog> records = page.getRecords();
+        return Result.ok(records);
+    }
 }
