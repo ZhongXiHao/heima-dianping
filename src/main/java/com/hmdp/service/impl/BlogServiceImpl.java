@@ -1,8 +1,10 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.BooleanUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
@@ -17,7 +19,11 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 
 @Service
@@ -41,8 +47,11 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
 
     private void isBlogLiked(Blog blog) {
-        Boolean isMember = stringRedisTemplate.opsForSet().isMember(RedisConstants.BLOG_LIKED_KEY + blog.getId(), UserHolder.getUser().getId().toString());
-        blog.setIsLike(BooleanUtil.isTrue(isMember));
+        if (UserHolder.getUser() == null) {
+            return;
+        }
+        Double score = stringRedisTemplate.opsForZSet().score(RedisConstants.BLOG_LIKED_KEY + blog.getId(), UserHolder.getUser().getId().toString());
+        blog.setIsLike(BooleanUtil.isTrue(score != null && score > 0));
     }
 
     @Override
@@ -69,19 +78,41 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Long userId = UserHolder.getUser().getId();
         String key = RedisConstants.BLOG_LIKED_KEY + id;
 
-        Long added = stringRedisTemplate.opsForSet().add(key, userId.toString());
-        if (added != null && added > 0) {
-            stringRedisTemplate.opsForSet().add(key, userId.toString());
+        Double score = stringRedisTemplate.opsForZSet().score(key, userId.toString());
+        System.out.println(score);
+        if (score == null) {
+            Boolean added = stringRedisTemplate.opsForZSet().add(key, userId.toString(), System.currentTimeMillis());
             update().setSql("liked = liked + 1").eq("id", id).update();
-            return Result.ok("Liked successfully");
+            if (BooleanUtil.isTrue(added)) {
+                return Result.ok("Liked successfully");
+            }
         } else {
-            Long removed = stringRedisTemplate.opsForSet().remove(key, userId.toString());
+            Long removed = stringRedisTemplate.opsForZSet().remove(key, userId.toString());
             if (removed != null && removed > 0) {
-                update().setSql("liked = liked - 1").eq("id", id).update();
+                update().setSql("liked = liked - 1").eq("id", id).gt("liked", 0).update();
                 return Result.ok("Unliked successfully");
             }
         }
 
         return Result.fail("Operation failed");
+    }
+
+    @Override
+    public Result queryBlogLikes(Long id) {
+        String key = RedisConstants.BLOG_LIKED_KEY + id;
+        LinkedHashSet<String> top5 = (LinkedHashSet<String>) stringRedisTemplate.opsForZSet().range(key, 0L, 4L);
+
+        assert top5 != null;
+        List<Long> top5Ids = top5.stream().map(Long::valueOf).collect(Collectors.toList());
+        List<User> users = userService.listByIds(top5Ids);
+
+        // 查询出来之后转成一个map key为id value为user对象 然后用stream把ids逐一map成user就可以了 保证了原本顺序
+        Map<Long, UserDTO> collect = users.stream().map(user ->
+                BeanUtil.copyProperties(user, UserDTO.class)
+        ).collect(Collectors.toMap(UserDTO::getId, userDTO -> userDTO, (existing, replacement) -> existing));
+        List<UserDTO> userDTOS = top5Ids.stream().map(collect::get).collect(Collectors.toList());
+
+        System.out.println(top5Ids);
+        return Result.ok(userDTOS);
     }
 }
