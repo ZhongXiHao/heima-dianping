@@ -4,25 +4,26 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.BooleanUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
+import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.CacheClient;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 
@@ -34,6 +35,8 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     private BlogMapper blogMapper;
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+    @Resource
+    private IFollowService followService;
 
     @Override
     public Result queryBlogById(Long id) {
@@ -121,5 +124,86 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Page<Blog> page = query().eq("user_id", id).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
         List<Blog> records = page.getRecords();
         return Result.ok(records);
+    }
+
+    @Override
+    public Result saveBlog(Blog blog) {
+
+        // 获取登录用户
+        UserDTO user = UserHolder.getUser();
+        blog.setUserId(user.getId());
+        // 保存探店博文
+        boolean save = save(blog);
+        if (!save) {
+            return Result.fail("Save failed");
+        }
+
+        List<Follow> followers = followService.query().eq("follow_user_id", user.getId()).list();
+        if (followers == null || followers.isEmpty()) {
+            return Result.ok();
+        }
+
+        // 推送给粉丝
+        for (Follow follower : followers) {
+            Long followerId = follower.getUserId();
+            String key = RedisConstants.FEED_KEY + followerId;
+            stringRedisTemplate.opsForZSet().add(key, blog.getId().toString(), System.currentTimeMillis());
+        }
+
+
+        // 返回id
+        return Result.ok(blog.getId());
+    }
+
+    @Override
+    public Result queryBlogOfByFollow(Long max, Integer offset) {
+        Long userId = UserHolder.getUser().getId();
+
+        long minTime = 0;
+        int os = 1; // 除了第一次查询，后续查询时，当前元素的都是从下一条数据开始的，所以初始值为 1
+
+        String key = RedisConstants.FEED_KEY + userId;
+        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet().reverseRangeByScoreWithScores(key, 0, max, offset, 3);
+
+        if (typedTuples == null || typedTuples.isEmpty()) {
+            return Result.ok();
+        }
+
+        List<Long> blogIds = new ArrayList<>(typedTuples.size());
+        for (ZSetOperations.TypedTuple<String> typedTuple : typedTuples) {
+            String blogIdStr = typedTuple.getValue();
+            assert blogIdStr != null;
+            blogIds.add(Long.valueOf(blogIdStr));
+            long time = Objects.requireNonNull(typedTuple.getScore()).longValue();
+            if (time == minTime) {
+                os++;
+            } else {
+                minTime = time;
+                os = 1;
+            }
+        }
+
+        if(minTime == max){
+            os += offset;
+        }
+
+        List<Blog> collect = listByIds(blogIds);
+        for (Blog blog : collect) {
+            Blog queryBlogById = blogMapper.queryBlogById(blog.getId());
+            if (queryBlogById != null) {
+                BeanUtil.copyProperties(blog, queryBlogById);
+            }
+            isBlogLiked(blog);
+        }
+
+        Map<Long, Blog> longBlogMap = collect.stream().collect(Collectors.toMap(
+                Blog::getId, blog -> blog, (existing, replacement) -> existing));
+
+        List<Blog> blogs = blogIds.stream().map(longBlogMap::get).collect(Collectors.toList());
+        ScrollResult scrollResult = new ScrollResult();
+        scrollResult.setList(blogs);
+        scrollResult.setOffset(os);
+        scrollResult.setMinTime(minTime);
+        return Result.ok(scrollResult);
     }
 }
