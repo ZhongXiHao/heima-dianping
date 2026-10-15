@@ -83,4 +83,14 @@ public class UserController {
     public Result queryUserById(@PathVariable("id") Long userId) {
         return userService.queryById(userId);
     }
+
+    @PostMapping("/sign")
+    public Result sign() {
+        return userService.sign();
+    }
+
+    @GetMapping("/sign/count")
+    public Result signCount() {
+        return userService.signCount();
+    }
 }
